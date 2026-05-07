@@ -27,6 +27,7 @@ async def main():
     first_run = len(seen_set) == 0
 
     async with TelegramClient(StringSession(SESSION), API_ID, API_HASH) as client:
+        await client.send_message(NOTIFY_TO, "🟢 stars-monitor test ping")
         peer = await client.get_input_entity(CHANNEL)
         res = await client(functions.payments.GetStarsTransactionsRequest(
             peer=peer,
