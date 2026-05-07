@@ -31,6 +31,7 @@ def notify(text):
             print(f"body: {e.read()[:500]}")
 
 async def main():
+    notify("🟢 monitor ran")
     seen = []
     if SEEN_FILE.exists():
         try:
