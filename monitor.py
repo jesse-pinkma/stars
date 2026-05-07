@@ -1,6 +1,8 @@
 import os
 import json
 import asyncio
+import urllib.request
+import urllib.parse
 from pathlib import Path
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -10,10 +12,20 @@ API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 SESSION = os.environ["SESSION_STRING"]
 CHANNEL = os.environ["CHANNEL"]
-NOTIFY_TO = os.environ.get("NOTIFY_TO", "me")
+BOT_TOKEN = os.environ["BOT_TOKEN"]
+CHAT_ID = os.environ["CHAT_ID"]
 
 SEEN_FILE = Path("seen.json")
 MAX_SEEN = 500
+
+
+def notify(text):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    data = urllib.parse.urlencode({"chat_id": CHAT_ID, "text": text}).encode()
+    try:
+        urllib.request.urlopen(url, data=data, timeout=10).read()
+    except Exception as e:
+        print(f"notify error: {e}")
 
 
 async def main():
@@ -27,7 +39,6 @@ async def main():
     first_run = len(seen_set) == 0
 
     async with TelegramClient(StringSession(SESSION), API_ID, API_HASH) as client:
-        await client.send_message(NOTIFY_TO, "🟢 stars-monitor test ping")
         peer = await client.get_input_entity(CHANNEL)
         res = await client(functions.payments.GetStarsTransactionsRequest(
             peer=peer,
@@ -46,7 +57,7 @@ async def main():
                     seen_set.add(tx.id)
             print(f"First run: primed {len(seen)} ids, balance {res.balance.amount}")
         else:
-            for tx in reversed(new_tx):  # oldest first
+            for tx in reversed(new_tx):
                 seen.append(tx.id)
                 seen_set.add(tx.id)
                 amount = tx.stars.amount
@@ -62,10 +73,8 @@ async def main():
                     + (f"\nPost ID: {msg_id}" if msg_id else "")
                     + f"\nBalance: {res.balance.amount} ⭐"
                 )
-                await client.send_message(NOTIFY_TO, text)
-            print(
-                f"Found {len(new_tx)} new tx, balance {res.balance.amount}"
-            )
+                notify(text)
+            print(f"Found {len(new_tx)} new tx, balance {res.balance.amount}")
 
     if len(seen) > MAX_SEEN:
         seen = seen[-MAX_SEEN:]
