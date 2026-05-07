@@ -23,10 +23,12 @@ def notify(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     data = urllib.parse.urlencode({"chat_id": CHAT_ID, "text": text}).encode()
     try:
-        urllib.request.urlopen(url, data=data, timeout=10).read()
+        resp = urllib.request.urlopen(url, data=data, timeout=10).read()
+        print(f"notify ok: {resp[:200]}")
     except Exception as e:
-        print(f"notify error: {e}")
-
+        print(f"notify FAILED: {type(e).__name__}: {e}")
+        if hasattr(e, "read"):
+            print(f"body: {e.read()[:500]}")
 
 async def main():
     seen = []
