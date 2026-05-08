@@ -17,6 +17,7 @@ CHAT_ID = os.environ["CHAT_ID"]
 
 SEEN_FILE = Path("seen.json")
 MAX_SEEN = 500
+USD_PER_STAR = 0.013
 
 
 def notify(text):
@@ -30,14 +31,37 @@ def notify(text):
         if hasattr(e, "read"):
             print(f"body: {e.read()[:500]}")
 
-async def main():
-    seen = []
+
+def load_state():
+    state = {"ids": [], "pending_msg_stars": 0}
     if SEEN_FILE.exists():
         try:
-            seen = json.loads(SEEN_FILE.read_text())
+            loaded = json.loads(SEEN_FILE.read_text())
+            if isinstance(loaded, list):
+                state["ids"] = loaded  # migrate old list-only format
+            elif isinstance(loaded, dict):
+                state["ids"] = loaded.get("ids", [])
+                state["pending_msg_stars"] = loaded.get("pending_msg_stars", 0)
         except Exception:
-            seen = []
-    seen_set = set(seen)
+            pass
+    return state
+
+
+def save_state(state):
+    if len(state["ids"]) > MAX_SEEN:
+        state["ids"] = state["ids"][-MAX_SEEN:]
+    SEEN_FILE.write_text(json.dumps(state))
+
+
+def get_amount(stars_obj):
+    if hasattr(stars_obj, "amount"):
+        return stars_obj.amount
+    return int(stars_obj)
+
+
+async def main():
+    state = load_state()
+    seen_set = set(state["ids"])
     first_run = len(seen_set) == 0
 
     async with TelegramClient(StringSession(SESSION), API_ID, API_HASH) as client:
@@ -51,36 +75,40 @@ async def main():
         ))
 
         new_tx = [tx for tx in res.history if tx.id not in seen_set]
+        balance = get_amount(res.balance)
 
         if first_run:
             for tx in res.history:
                 if tx.id not in seen_set:
-                    seen.append(tx.id)
+                    state["ids"].append(tx.id)
                     seen_set.add(tx.id)
-            print(f"First run: primed {len(seen)} ids, balance {res.balance.amount}")
+            print(f"First run: primed {len(state['ids'])} ids, balance {balance}")
         else:
-            for tx in reversed(new_tx):
-                seen.append(tx.id)
+            for tx in reversed(new_tx):  # oldest first
+                state["ids"].append(tx.id)
                 seen_set.add(tx.id)
-                amount = tx.amount.amount if hasattr(tx.amount, "amount") else tx.amount
-                msg_id = getattr(tx, "msg_id", None)
-                title = (
-                    getattr(tx, "title", None)
-                    or getattr(tx, "description", "")
-                    or "paid post"
-                )
-                text = (
-                    f"⭐ +{amount} stars received\n"
-                    f"Item: {title}"
-                    + (f"\nPost ID: {msg_id}" if msg_id else "")
-                    + f"\nBalance: {res.balance.amount} ⭐"
-                )
-                notify(text)
-            print(f"Found {len(new_tx)} new tx, balance {res.balance.amount}")
+                amount = get_amount(tx.amount)
 
-    if len(seen) > MAX_SEEN:
-        seen = seen[-MAX_SEEN:]
-    SEEN_FILE.write_text(json.dumps(seen))
+                if amount == 1:
+                    # 1-star message tip → buffer, don't notify yet
+                    state["pending_msg_stars"] += 1
+                    continue
+
+                # Paid post → notify, including any buffered messages
+                msg_id = getattr(tx, "msg_id", None)
+                usd = amount * USD_PER_STAR
+                lines = [f"⭐ +{amount} stars (=${usd:.2f}) received"]
+                if msg_id:
+                    lines.append(f"Post ID: {msg_id}")
+                if state["pending_msg_stars"] > 0:
+                    lines.append(f"+{state['pending_msg_stars']} stars for messages")
+                    state["pending_msg_stars"] = 0
+                lines.append(f"Balance: {balance} ⭐")
+                notify("\n".join(lines))
+
+            print(f"Found {len(new_tx)} new tx, balance {balance}, pending msgs {state['pending_msg_stars']}")
+
+    save_state(state)
 
 
 if __name__ == "__main__":
