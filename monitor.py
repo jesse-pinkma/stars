@@ -62,7 +62,7 @@ async def main():
             for tx in reversed(new_tx):
                 seen.append(tx.id)
                 seen_set.add(tx.id)
-                amount = tx.stars.amount
+                amount = tx.amount.amount if hasattr(tx.amount, "amount") else tx.amount
                 msg_id = getattr(tx, "msg_id", None)
                 title = (
                     getattr(tx, "title", None)
