@@ -94,12 +94,6 @@ async def main():
                 state["ids"].append(tx.id)
                 seen_set.add(tx.id)
 
-                # Debug: log full tx so we can see fields
-                try:
-                    print(f"TX: {tx.stringify()}")
-                except Exception:
-                    print(f"TX: {tx}")
-
                 stars = get_total_stars(getattr(tx, "amount", None))
                 paid_msgs = getattr(tx, "paid_messages", None)
 
