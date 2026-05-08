@@ -28,8 +28,6 @@ def notify(text):
         print(f"notify ok: {resp[:200]}")
     except Exception as e:
         print(f"notify FAILED: {type(e).__name__}: {e}")
-        if hasattr(e, "read"):
-            print(f"body: {e.read()[:500]}")
 
 
 def load_state():
@@ -38,7 +36,7 @@ def load_state():
         try:
             loaded = json.loads(SEEN_FILE.read_text())
             if isinstance(loaded, list):
-                state["ids"] = loaded  # migrate old list-only format
+                state["ids"] = loaded
             elif isinstance(loaded, dict):
                 state["ids"] = loaded.get("ids", [])
                 state["pending_msg_stars"] = loaded.get("pending_msg_stars", 0)
@@ -53,10 +51,18 @@ def save_state(state):
     SEEN_FILE.write_text(json.dumps(state))
 
 
-def get_amount(stars_obj):
-    if hasattr(stars_obj, "amount"):
-        return stars_obj.amount
-    return int(stars_obj)
+def get_total_stars(stars_obj):
+    if stars_obj is None:
+        return 0
+    if isinstance(stars_obj, (int, float)):
+        return stars_obj
+    whole = getattr(stars_obj, "amount", 0) or 0
+    nanos = getattr(stars_obj, "nanos", 0) or 0
+    return whole + nanos / 1e9
+
+
+def fmt(s):
+    return str(int(s)) if s == int(s) else f"{s:.2f}"
 
 
 async def main():
@@ -75,7 +81,7 @@ async def main():
         ))
 
         new_tx = [tx for tx in res.history if tx.id not in seen_set]
-        balance = get_amount(res.balance)
+        balance = get_total_stars(res.balance)
 
         if first_run:
             for tx in res.history:
@@ -84,29 +90,39 @@ async def main():
                     seen_set.add(tx.id)
             print(f"First run: primed {len(state['ids'])} ids, balance {balance}")
         else:
-            for tx in reversed(new_tx):  # oldest first
+            for tx in reversed(new_tx):
                 state["ids"].append(tx.id)
                 seen_set.add(tx.id)
-                amount = get_amount(tx.amount)
 
-                if amount == 1:
-                    # 1-star message tip → buffer, don't notify yet
-                    state["pending_msg_stars"] += 1
+                # Debug: log full tx so we can see fields
+                try:
+                    print(f"TX: {tx.stringify()}")
+                except Exception:
+                    print(f"TX: {tx}")
+
+                stars = get_total_stars(getattr(tx, "amount", None))
+                paid_msgs = getattr(tx, "paid_messages", None)
+
+                # Paid message → buffer, no notification
+                if paid_msgs:
+                    if stars > 0:
+                        state["pending_msg_stars"] += stars
                     continue
 
-                # Paid post → notify, including any buffered messages
-                msg_id = getattr(tx, "msg_id", None)
-                usd = amount * USD_PER_STAR
-                lines = [f"⭐ +{amount} stars (=${usd:.2f}) received"]
-                if msg_id:
-                    lines.append(f"Post ID: {msg_id}")
+                # Skip 0-star or weird transactions
+                if stars <= 0:
+                    continue
+
+                # Paid post → notify
+                usd = stars * USD_PER_STAR
+                lines = [f"⭐ +{fmt(stars)} stars (=${usd:.2f}) received"]
                 if state["pending_msg_stars"] > 0:
-                    lines.append(f"+{state['pending_msg_stars']} stars for messages")
+                    lines.append(f"⭐ +{fmt(state['pending_msg_stars'])} stars for messages")
                     state["pending_msg_stars"] = 0
-                lines.append(f"Balance: {balance} ⭐")
+                lines.append(f"⭐ Balance: {fmt(balance)}")
                 notify("\n".join(lines))
 
-            print(f"Found {len(new_tx)} new tx, balance {balance}, pending msgs {state['pending_msg_stars']}")
+            print(f"Found {len(new_tx)} new tx, balance {balance}, pending {state['pending_msg_stars']}")
 
     save_state(state)
 
